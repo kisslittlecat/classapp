@@ -1,10 +1,15 @@
 import json
 
 from flask import Blueprint, redirect, render_template, request, url_for, session, jsonify
+from geventwebsocket import WebSocketError
 
-from App.models import db, User, Grade, Student, Role, Permission
+from App.models import db, User, Grade, Student, Role, Permission, GradeSchema
 from utils.login import is_login
 
+from gevent.pywsgi import WSGIServer
+
+user_socket_list = []
+user_socket_dict = {}
 
 user_blueprint = Blueprint('user', __name__)
 
@@ -88,11 +93,23 @@ def login():
             # 向session中写入相应的数据
             session['user_id'] = user.u_id
             session['username'] = user.username
-            return jsonify(code=200, msg="登录成功")
+            return jsonify(code=200, msg="登录成功", use_id=user.u_id)
         # 如果用户名和密码不一致返回登录页面,并给提示信息
         else:
             msg = '用户名或者密码不一致'
             return jsonify(code=200, msg=msg)
+
+
+@user_blueprint.route('/logout/', methods=['POST'])
+def logout():
+    """
+    退出登录
+    """
+    if request.method == 'POST':
+        # 清空session
+        session.clear()
+        # 跳转到登录页面
+        return jsonify(code=200, msg="登出成功")
 
 
 @user_blueprint.route('/addgrade/', methods=['GET', 'POST'])
@@ -114,7 +131,7 @@ def add_grade():
     return jsonify(code=200, msg="添加班级成功")
 
 
-@user_blueprint.route('/edit_grade/', methods=['GET', 'POST'])
+@user_blueprint.route('/editgrade/', methods=['GET', 'POST'])
 @is_login
 def edit_grade():
     """编辑班级"""
@@ -132,26 +149,15 @@ def edit_grade():
         return jsonify(code=200, msg="编辑班级成功")
 
 
-@user_blueprint.route('/grade_student/', methods=['GET'])
+@user_blueprint.route('/gradelist/', methods=['GET', 'POST'])
 @is_login
-def grade_students_list():
-    """班级中学习的信息列表"""
-    if request.method == 'GET':
-        g_id = request.args.get('g_id')
-        stus = Student.query.filter(Student.grade_id == g_id).all()
-        return render_template('student.html', stus=stus)
-
-
-@user_blueprint.route('/student/', methods=['GET', 'POST'])
-@is_login
-def student_list():
-    """学生信息列表"""
-    if request.method == 'GET':
-        page = int(request.args.get('page', 1))
-        page_num = int(request.args.get('page_num', 5))
-        paginate = Student.query.order_by('s_id').paginate(page, page_num)
-        stus = paginate.items
-        return render_template('student.html', stus=stus, paginate=paginate)
+def grade_list():
+    """班级信息列表"""
+    if request.method == 'POST':
+        grades = Grade.query.all()
+        grade_schema = GradeSchema(many=True)
+        grade_data = grade_schema.dump(grades)
+        return jsonify(grade_data)
 
 
 @user_blueprint.route('/addstu/', methods=['GET', 'POST'])
@@ -171,69 +177,65 @@ def add_stu():
             return jsonify(code=200, msg=msg, grades=grades)
         stu = Student(s_name=s_name, s_sex=s_sex, grade_id=grade_id)
         stu.save()
+
         return jsonify(code=200, msg="添加学生成功")
-
-
-@user_blueprint.route('/roles/', methods=['GET', 'POST'])
-@is_login
-def roles_list():
-    """角色信息列表"""
-    if request.method == 'GET':
-        roles = Role.query.all()
-        return render_template('roles.html', roles=roles)
 
 
 @user_blueprint.route('/addroles/', methods=['GET', 'POST'])
 @is_login
 def add_roles():
     """添加角色"""
-    if request.method == 'GET':
-        return render_template('addroles.html')
+
     if request.method == 'POST':
-        r_name = request.form.get('r_name')
+        r_name = request.values.get('r_name')
         role = Role(r_name=r_name)
         role.save()
 
-        return redirect(url_for('user.roles_list'))
+        return jsonify(code=200, msg="添加角色成功")
 
 
-@user_blueprint.route('/userperlist/', methods=['GET', 'POST'])
+@user_blueprint.route('/addpermission/', methods=['GET', 'POST'])
 @is_login
-def user_per_list():
-    """用户权限列表"""
-    if request.method == 'GET':
-        r_id = request.args.get('r_id')
-        pers = Role.query.filter(Role.r_id == r_id).first().permission
-        return render_template('user_per_list.html', pers=pers)
+def add_permission():
+    """添加权限"""
 
     if request.method == 'POST':
-        r_id = request.args.get('r_id')
-        p_id = request.form.get('p_id')
-        # 获取到角色对象
-        role = Role.query.get(r_id)
-        # 获取到权限对象
-        per = Permission.query.get(p_id)
-        # 解除角色和权限的对应关系
-        per.roles.remove(role)
-        # 保存解除的关联的信息
-        db.session.commit()
-        pers = Role.query.filter(Role.r_id == r_id).first().permission
-        # 返回到用户权限列表
-        return render_template('user_per_list.html', pers=pers, r_id=r_id)
+        p_name = request.values.get('p_name')
+        p_er = request.values.get('p_er')
+
+        permission = Permission(p_name=p_name, p_er=p_er)
+        permission.save()
+
+        return jsonify(code=200, msg="添加权限成功")
+
+
+@user_blueprint.route('/eidtorpermission/', methods=['GET', 'POST'])
+@is_login
+def eidtor_permission():
+    """编辑权限"""
+
+    if request.method == 'POST':
+        p_id = request.values.get('p_id')
+        p_name = request.values.get('p_name')
+        p_er = request.values.get('p_er')
+
+        permission = Permission.query.filter(Permission.p_id == p_id).first()
+        # 重新给班级赋值
+        permission.p_name = p_name
+        permission.p_er = p_er
+        permission.save()
+
+        return jsonify(code=200, msg="编辑权限成功")
 
 
 @user_blueprint.route('/adduserper/', methods=['GET', 'POST'])
 @is_login
 def add_user_per():
     """添加用户权限"""
-    if request.method == 'GET':
-        permissions = Permission.query.all()
-        r_id = request.args.get('r_id')
-        return render_template('add_user_per.html', permissions=permissions, r_id=r_id)
 
     if request.method == 'POST':
-        r_id = request.form.get('r_id')
-        p_id = request.form.get('p_id')
+        r_id = request.values.get('r_id')
+        p_id = request.values.get('p_id')
         # 获取角色对象
         role = Role.query.get(r_id)
         # 获取权限对象
@@ -245,200 +247,94 @@ def add_user_per():
         # 保存信息
         db.session.commit()
 
-        return redirect(url_for('user.roles_list'))
+        return jsonify(code=200, msg="添加用户权限成功")
 
 
 @user_blueprint.route('/subuserper/', methods=['GET', 'POST'])
 @is_login
 def sub_user_per():
     """减少用户权限"""
-    if request.method == 'GET':
-        r_id = request.args.get('r_id')
-        pers = Role.query.filter(Role.r_id == r_id).first().permission
-        return render_template('user_per_list.html', pers=pers, r_id=r_id)
 
     if request.method == 'POST':
         r_id = request.args.get('r_id')
-        p_id = request.form.get('p_id')
+        p_id = request.values.get('p_id')
+
         role = Role.query.get(r_id)
         per = Permission.query.get(p_id)
 
         # 解除角色和权限的对应关系
         per.roles.remove(role)
+
         db.session.commit()
 
-        pers = Role.query.filter(Role.r_id == r_id).first().permission
-        return render_template('user_per_list.html', pers=pers, r_id=r_id)
-
-
-@user_blueprint.route('/permissions/', methods=['GET', 'POST'])
-@is_login
-def permission_list():
-    """权限列表"""
-    if request.method == 'GET':
-        permissions = Permission.query.all()
-        return render_template('permissions.html', permissions=permissions)
-
-
-@user_blueprint.route('/addpermission/', methods=['GET', 'POST'])
-@is_login
-def add_permission():
-    """添加权限"""
-    if request.method == 'GET':
-        pers = Permission.query.all()
-        return render_template('addpermission.html', pers=pers)
-
-    if request.method == 'POST':
-        p_name = request.form.get('p_name')
-        p_er = request.form.get('p_er')
-
-        p_name_test_repeat = Permission.query.filter(Permission.p_name == p_name).first()
-        if p_name_test_repeat:
-            msg = '*权限名称重复'
-            return render_template('addpermission.html', msg=msg)
-
-        p_er_test_repeat = Permission.query.filter(Permission.p_er == p_er).first()
-
-        if p_er_test_repeat:
-            msg1 = '*权限简写名重复'
-            return render_template('addpermission.html', msg1=msg1)
-
-        permission = Permission(p_name=p_name, p_er=p_er)
-        permission.save()
-
-        return redirect(url_for('user.permission_list'))
-
-
-@user_blueprint.route('/eidtorpermission/', methods=['GET', 'POST'])
-@is_login
-def eidtor_permission():
-    """编辑权限"""
-    if request.method == 'GET':
-        p_id = request.args.get('p_id')
-        pers = Permission.query.filter(Permission.p_id == p_id).first()
-        return render_template('addpermission.html', pers=pers, p_id=p_id)
-    if request.method == 'POST':
-        p_id = request.form.get('p_id')
-        p_name = request.form.get('p_name')
-        p_er = request.form.get('p_er')
-
-        p_name_test_repeat = Permission.query.filter(Permission.p_name == p_name).first()
-        if p_name_test_repeat:
-            msg = '*权限名称重复'
-            pers = Permission.query.all()
-            return render_template('addpermission.html', msg=msg, pers=pers)
-
-        p_er_test_repeat = Permission.query.filter(Permission.p_er == p_er).first()
-
-        if p_er_test_repeat:
-            msg1 = '*权限简写名重复'
-            pers = Permission.query.all()
-            return render_template('addpermission.html', msg1=msg1, pers=pers)
-
-        per = Permission.query.filter(Permission.p_id == p_id).first()
-        per.p_name = p_name
-        per.p_er = p_er
-        db.session.commit()
-
-        return redirect(url_for('user.permission_list'))
-
-
-@user_blueprint.route('/userlist/', methods=['GET', 'POST'])
-@is_login
-def user_list():
-    """用户信息列表"""
-    if request.method == 'GET':
-        page = int(request.args.get('page', 1))
-        page_num = int(request.args.get('page_num', 5))
-        paginate = User.query.order_by('u_id').paginate(page, page_num)
-        users = paginate.items
-        return render_template('users.html', users=users, paginate=paginate)
-
-
-@user_blueprint.route('/adduser/', methods=['GET', 'POST'])
-@is_login
-def add_user():
-    """添加用户信息"""
-    if request.method == 'GET':
-        return render_template('adduser.html')
-
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password1 = request.form.get('password1')
-        password2 = request.form.get('password2')
-
-        flag = True
-        if not all([username, password1, password2]):
-            msg, flag = '请填写完整信息', False
-        if len(username) > 16:
-            msg, flag = '用户名太长', False
-        if password1 != password2:
-            msg, flag = '两次密码不一致', False
-        if not flag:
-            return render_template('adduser.html', msg=msg)
-        user = User(username=username, password=password1)
-        user.save()
-        return redirect(url_for('user.user_list'))
+        return jsonify(code=200, msg="减少用户权限成功")
 
 
 @user_blueprint.route('/assignrole/', methods=['GET', 'POST'])
 @is_login
 def assign_user_role():
     """分配用户权限"""
-    if request.method == 'GET':
-        u_id = request.args.get('u_id')
-        roles = Role.query.all()
-        return render_template('assign_user_role.html', roles=roles, u_id=u_id)
+
     if request.method == 'POST':
-        r_id = request.form.get('r_id')
-        u_id = request.form.get('u_id')
+        r_id = request.values.get('r_id')
+        u_id = request.values.get('u_id')
         user = User.query.filter_by(u_id=u_id).first()
         user.role_id = r_id
         db.session.commit()
 
-        return redirect(url_for('user.user_list'))
+        return jsonify(code=200, msg="分配用户权限成功")
 
 
 @user_blueprint.route('/changepwd/', methods=['GET', 'POST'])
 @is_login
 def change_password():
     """修改用户密码"""
-    if request.method == 'GET':
-        username = session.get('username')
-        user = User.query.filter_by(username=username).first()
-        return render_template('changepwd.html', user=user)
 
     if request.method == 'POST':
         username = session.get('username')
-        pwd1 = request.form.get('pwd1')
-        pwd2 = request.form.get('pwd2')
-        pwd3 = request.form.get('pwd3')
+        pwd1 = request.values.get('pwd1')
+        pwd2 = request.values.get('pwd2')
+        pwd3 = request.values.get('pwd3')
 
         pwd = User.query.filter(User.password == pwd1, User.username == username).first()
         if not pwd:
             msg = '请输入正确的旧密码'
             username = session.get('username')
             user = User.query.filter_by(username=username).first()
-            return render_template('changepwd.html', msg=msg, user=user)
+            return jsonify(code=200, msg=msg)
         else:
             if not all([pwd2, pwd3]):
                 msg = '密码不能为空'
                 username = session.get('username')
                 user = User.query.filter_by(username=username).first()
-                return render_template('changepwd.html', msg=msg, user=user)
+                return jsonify(code=200, msg=msg)
             if pwd2 != pwd3:
                 msg = '两次密码不一致,请重新输入'
                 username = session.get('username')
                 user = User.query.filter_by(username=username).first()
-                return render_template('changepwd.html', msg=msg, user=user)
+                return jsonify(code=200, msg=msg)
             pwd.password = pwd2
             db.session.commit()
-            return redirect(url_for('user.change_pass_sucess'))
+            return jsonify(code=200, msg="修改密码成功")
 
 
-@user_blueprint.route('/changepwdsu/', methods=['GET'])
+@user_blueprint.route('/ws/', methods=['GET', 'POST'])
 @is_login
-def change_pass_sucess():
-    """修改密码成功后"""
-    if request.method == 'GET':
-        return render_template('changepwdsu.html')
+def my_ws_func():
+    # print(dir(request.environ))
+    user_socket = request.environ.get("wsgi.websocket")  # type:WebSocket
+    user_socket_list.append(user_socket)
+    # web + socket
+    print(user_socket)
+    while 1:
+        msg = user_socket.receive()  # 等待接收客户端发送过来的消息
+        for us in user_socket_list:
+            if us == user_socket:
+                continue
+            try:
+                us.send(msg)
+            except:
+                continue
+
+        # print(msg)
+        # user_socket.send(msg)
