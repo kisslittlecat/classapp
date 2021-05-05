@@ -5,53 +5,35 @@ from flask_marshmallow import Marshmallow
 from flask_sqlalchemy import SQLAlchemy
 from marshmallow_sqlalchemy import ModelSchema
 
+
 # 初始化db
 db = SQLAlchemy()
 
 
 class User(db.Model):
     """用户模型"""
-    u_id = db.Column(db.String(200), primary_key=True)
-    username = db.Column(db.String(16))
+    user_id = db.Column(db.String(200), primary_key=True)
+    user_name = db.Column(db.String(16))
     password = db.Column(db.String(200))
-    u_phone = db.Column(db.String(11))
-    u_create_time = db.Column(db.DateTime, default=datetime.now)
-
-    # 用户和角色的一对多的关联关系
-    role_id = db.Column(db.Integer, db.ForeignKey('role.r_id'))
+    user_phone = db.Column(db.String(11))
+    user_pic = db.Column(db.String(1000))
+    user_question = db.Column(db.String(200))
+    user_answer = db.Column(db.String(200))
+    user_role = db.Column(db.Integer)
+    user_class = db.Column(db.String(200))
 
     __tablename__ = 'user'
 
-    def __init__(self, u_id, username, password, u_phone):
-        self.u_id = u_id
-        self.username = username
+    def __init__(self, u_id, username, password, u_phone, u_pic_url, u_question, u_answer, u_role, u_class):
+        self.user_id = u_id
+        self.user_name = username
         self.password = password
-        self.u_phone = u_phone
-
-    def save(self):
-        db.session.add(self)
-        db.session.commit()
-
-
-class Student(db.Model):
-    """学生模型"""
-    s_id = db.Column(db.String(200), primary_key=True)
-    s_name = db.Column(db.String(16))
-    s_phone = db.Column(db.String(11))
-    s_permission = db.Column(db.Integer)
-    s_create_time = db.Column(db.DateTime, default=datetime.now)
-
-    # 设置与班级 一对多的关联关系`
-    user_id = db.Column(db.String(200), db.ForeignKey('user.u_id'), nullable=True)
-
-    __tablename__ = 'student'
-
-    def __init__(self, s_id, s_name, s_phone, s_permission, user_id):
-        self.s_id = s_id
-        self.s_name = s_name
-        self.s_phone = s_phone
-        self.s_permission = s_permission
-        self.user_id = user_id
+        self.user_phone = u_phone
+        self.user_pic = u_pic_url
+        self.user_question = u_question
+        self.user_answer = u_answer
+        self.user_role = u_role
+        self.user_class = u_class
 
     def save(self):
         db.session.add(self)
@@ -60,22 +42,21 @@ class Student(db.Model):
 
 class Message(db.Model):
     """消息模型"""
-    m_id = db.Column(db.Integer, autoincrement=True, primary_key=True)
-    m_content = db.Column(db.String(200))
-    m_from = db.Column(db.String(200))
-    m_to = db.Column(db.String(200))
-    m_create_time = db.Column(db.DateTime, default=datetime.now)
-
-    # 设置与班级 一对多的关联关系`
-    user_id = db.Column(db.String(200), db.ForeignKey('user.u_id'), nullable=True)
+    message_id = db.Column(db.Integer, autoincrement=True, primary_key=True)
+    message_content = db.Column(db.String(200))
+    message_from = db.Column(db.String(200))
+    message_to = db.Column(db.String(200))
+    """read 0代表未读 1代表已读"""
+    message_read = db.Column(db.String(200))
+    message_create_time = db.Column(db.DateTime, default=datetime.now)
 
     __tablename__ = 'message'
 
-    def __init__(self, m_content, m_from, m_to, user_id):
-        self.m_content = m_content
-        self.m_from = m_from
-        self.m_to = m_to
-        self.user_id = user_id
+    def __init__(self, m_content, m_from, m_to):
+        self.message_content = m_content
+        self.message_from = m_from
+        self.message_to = m_to
+        self.message_read = "0"
 
     def save(self):
         db.session.add(self)
@@ -84,68 +65,33 @@ class Message(db.Model):
 
 class Notice(db.Model):
     """通知模型"""
-    n_id = db.Column(db.Integer, autoincrement=True, primary_key=True)
-    n_title = db.Column(db.String(200))
-    n_content = db.Column(db.String(200))
-    n_create_time = db.Column(db.DateTime, default=datetime.now)
-
-    # 设置与用户 一对多的关联关系`
-    user_id = db.Column(db.String(200), db.ForeignKey('user.u_id'), nullable=True)
+    notice_id = db.Column(db.Integer, autoincrement=True, primary_key=True)
+    notice_title = db.Column(db.String(200))
+    notice_content = db.Column(db.String(200))
+    notice_author = db.Column(db.String(200))
+    notice_type = db.Column(db.Integer)
+    notice_read = db.Column(db.String(1000))
+    notice_create_time = db.Column(db.DateTime, default=datetime.now)
+    notice_class = db.Column(db.String(200))
 
     __tablename__ = 'notice'
 
-    def __init__(self, n_title, n_content, user_id):
-        self.n_title = n_title
-        self.n_content = n_content
-        self.user_id = user_id
+    def __init__(self, n_title, n_content, n_author, n_type, n_class):
+        self.notice_title = n_title
+        self.notice_content = n_content
+        self.notice_author = n_author
+        self.notice_type = n_type
+        self.notice_read = ""
+        self.notice_class = n_class
 
     def save(self):
         db.session.add(self)
         db.session.commit()
 
 
-# 角色和权限的(多对多的)关联表
-# r_p为关联表的表名
-r_p = db.Table('r_p',
-               db.Column('role_id', db.Integer, db.ForeignKey('role.r_id'), primary_key=True),
-               db.Column('permission_id', db.Integer, db.ForeignKey('permission.p_id'), primary_key=True))
-
-
-class Role(db.Model):
-    r_id = db.Column(db.Integer, autoincrement=True, primary_key=True)
-    r_name = db.Column(db.String(10))
-    # 用户和角色的一对多的关联关系
-    users = db.relationship('User', backref='role')
-
-    __tablename__ = 'role'
-
-    def __init__(self, r_name):
-        self.r_name = r_name
-
-    def save(self):
-        db.session.add(self)
-        db.session.commit()
-
-
-class Permission(db.Model):
-    p_id = db.Column(db.Integer, autoincrement=True, primary_key=True)
-    p_name = db.Column(db.String(16), unique=True)
-    # 角色和权限的多对多的关系
-    roles = db.relationship('Role', secondary=r_p, backref=db.backref('permission', lazy=True))
-
-    __tablename__ = 'permission'
-
-    def __init__(self, p_name):
-        self.p_name = p_name
-
-    def save(self):
-        db.session.add(self)
-        db.session.commit()
-
-
-class StudentSchema(ModelSchema):
+class UserSchema(ModelSchema):
     class Meta:
-        model = Student
+        model = User
 
 
 class NoticeSchema(ModelSchema):
